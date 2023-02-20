@@ -16,6 +16,10 @@ operations = set()
 savings = {}
 usd_rates = {}
 
+# calc_type = 'FIFO'
+calc_type = 'AVG'
+# calc_type = 'LIFO'
+
 
 def get_eur_amount_for_usd(amount, date, coin):
     if 'USD' in coin:
@@ -319,9 +323,6 @@ def load_usd_rates(filename):
 # ['User_ID', 'UTC_Time', 'Account', 'Operation', 'Coin', 'Change', 'Remark']
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
-    # calc_type = 'FIFO'
-    calc_type = 'AVG'
-    # calc_type = 'LIFO'
     read_file("tax_input.csv")
     load_usd_rates("eur_usd_rate_2022.csv")
     enrich_data()
