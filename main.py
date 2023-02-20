@@ -273,7 +273,7 @@ def show_operations(result_filename):
     plus_profit = 0
     with open(result_filename, 'w') as f:
         fieldnames = ['Time', 'Minus coin', 'Plus coin', 'Minus amount', 'Plus amount', 'Is profit?', 'Profit',
-                      'old_eur_amount', 'new_eur_amount', 'EUR/USD', 'BTC', 'USDT']
+                      'old_eur_amount', 'new_eur_amount', 'EUR/USD', 'BTC', 'USDT', 'Minus source']
         file_writer = csv.writer(f, delimiter=';', lineterminator='\n')
         file_writer.writerow(fieldnames)
 
@@ -289,7 +289,8 @@ def show_operations(result_filename):
                                   grouped_item.get('new_eur_amount'),
                                   grouped_item['eur_usd'],
                                   grouped_item.get('savings').get('BTC', {}).get('Sum'),
-                                  grouped_item.get('savings').get('USDT', {}).get('Sum')
+                                  grouped_item.get('savings').get('USDT', {}).get('Sum'),
+                                  grouped_item.get('minus_coin_list')
                                   ])
             print(grouped_item['EST_Time'], grouped_item['Operation'], grouped_item.get('Plus', 'No Plus'),
                   grouped_item.get('Minus', 'No minus'))
