@@ -322,7 +322,7 @@ if __name__ == '__main__':
     # calc_type = 'FIFO'
     calc_type = 'AVG'
     # calc_type = 'LIFO'
-    read_file("TAX2.csv")
+    read_file("tax_input.csv")
     load_usd_rates("eur_usd_rate_2022.csv")
     enrich_data()
     process_grouped_data(calc_type)
