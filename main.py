@@ -93,7 +93,6 @@ def read_file(filename):
     with open(filename, "r") as f:
         file_reader = csv.reader(f, delimiter=';')
         header_names = []
-        fee_rows = []
         for row in file_reader:
             if len(header_names) == 0:
                 header_names = row
@@ -102,16 +101,7 @@ def read_file(filename):
                 for i in range(len(header_names)):
                     data_item[header_names[i]] = row[i]
                 if data_item['Operation'] not in remove_operations:
-                    if data_item['Operation'] == 'Fee' and data[-1]['UTC_Time'] != data_item['UTC_Time']:
-                        fee_rows.append(data_item)
-                    else:
-                        data.append(data_item)
-                        if len(fee_rows) > 0:
-                            data.extend(fee_rows)
-                            fee_rows = []
-
-        if len(fee_rows) > 0:
-            data.extend(fee_rows)
+                    data.append(data_item)
     return data
 
 
@@ -125,7 +115,10 @@ def enrich_data(read_data):
 
         if len(operations) != 0 and \
                 operations[-1].est_time == read_data_item['EST_Time'] and \
-                (operations[-1].type == read_data_item['Operation'] or read_data_item['Operation'] == 'Fee'):
+                (operations[-1].type == read_data_item['Operation'] or read_data_item['Operation'] == 'Fee' or
+                 operations[-1].type == 'Fee'):
+            if read_data_item['Operation'] != 'Fee':
+                operations[-1].type = read_data_item['Operation']
             if float(read_data_item['Change']) >= 0 or read_data_item['Operation'] == 'Fee':
                 if operations[-1].plus is None:
                     operations[-1].plus = Transaction(coin=read_data_item['Coin'],
@@ -146,7 +139,7 @@ def enrich_data(read_data):
             operations.append(Operation())
             operations[-1].est_time = read_data_item['EST_Time']
             operations[-1].type = read_data_item['Operation']
-            if float(read_data_item['Change']) >= 0:
+            if float(read_data_item['Change']) >= 0 or read_data_item['Operation'] == 'Fee':
                 operations[-1].plus = Transaction(coin=read_data_item['Coin'],
                                                   amount=float(read_data_item['Change']))
             else:
@@ -285,4 +278,3 @@ if __name__ == '__main__':
     enrich_data(read_data)
     process_grouped_data(calc_type)
     show_operations(f"results_{calc_type}.csv")
-
