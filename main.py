@@ -1,10 +1,46 @@
 import csv
+from copy import deepcopy
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from copy import deepcopy
 
-data = []
-grouped_data = []
+
+@dataclass
+class CoinExchangeItem:
+    amount: float
+    eur_amount: float
+    exchange_eur_rate: float
+
+
+@dataclass
+class CoinSaving:
+    sum: float = 0
+    sum_eur: float = 0
+    coins_list: list[CoinExchangeItem] = field(default_factory=list)
+
+
+@dataclass
+class Transaction:
+    coin: str
+    amount: float
+
+
+@dataclass
+class Operation:
+    est_time: datetime = None
+    utc_time: datetime = None
+    type: str = None
+    plus: Transaction = None
+    minus: Transaction = None
+    eur_usd_rate: float = None
+    new_eur_amount: float = None
+    old_eur_amount: float = None
+    profit_flag: bool = None
+    profit: float = None
+    coins_list: list[CoinExchangeItem] = None
+    savings_after: dict[str, CoinSaving] = field(default_factory=dict)
+
+
 remove_operations = ('Transfer from Main Account/Futures to Margin Account',
                      'Transfer from Margin Account to Main Account/Futures',
                      'Main and Funding Account Transfer',
@@ -12,13 +48,13 @@ remove_operations = ('Transfer from Main Account/Futures to Margin Account',
                      'Simple Earn Flexible Redemption',
                      'Fiat Deposit',
                      'Small Assets Exchange BNB')
-operations = set()
-savings = {}
+EPS: float = 1e-6
+savings: dict[str, CoinSaving] = {}
+operations: list[Operation] = []
 usd_rates = {}
 
 # calc_type = 'FIFO'
 calc_type = 'AVG'
-# calc_type = 'LIFO'
 
 
 def get_eur_amount_for_usd(amount, date, coin):
@@ -35,38 +71,25 @@ def get_eur_amount_for_usd(amount, date, coin):
     raise NotImplementedError
 
 
-def get_data_operation(data_row):
-    return data_row['Operation']
-
-
-def get_data_coin(data_row):
-    return data_row['Coin']
-
-
 def get_data_amount(data_row):
     return float(data_row['Change'])
 
 
-def get_data_date(data_row):
-    return data_row['EST_Time']
-
-
 def add_coin_amount(coin, amount, eur_amount):
     if coin not in savings:
-        savings[coin] = {}
-        savings[coin]['Sum'] = 0
-        savings[coin]['Eur'] = 0
-        savings[coin]['List'] = []
-    savings[coin]['Sum'] += amount
-    savings[coin]['Eur'] += eur_amount
-    savings[coin]['List'].append([amount, eur_amount, 1.0 * eur_amount / amount])
-    if savings[coin]['Sum'] < -1e-5:
-        raise Exception(f'savings[{coin}][Sum] < 0')
-    if savings[coin]['Eur'] < -1e-5:
-        raise Exception(f'savings[{coin}][Eur] < 0')
+        savings[coin] = CoinSaving()
+    savings[coin].sum += amount
+    savings[coin].sum_eur += eur_amount
+    savings[coin].coins_list.append(CoinExchangeItem(amount, eur_amount, 1.0 * eur_amount / amount))
+    if savings[coin].sum < -EPS:
+        raise Exception(f'savings[{coin}].sum < 0')
+    if savings[coin].sum_eur < -EPS:
+        raise Exception(f'savings[{coin}].sum_eur < 0')
 
 
+# csv columns: ['User_ID', 'UTC_Time', 'Account', 'Operation', 'Coin', 'Change', 'Remark']
 def read_file(filename):
+    data = []
     with open(filename, "r") as f:
         file_reader = csv.reader(f, delimiter=';')
         header_names = []
@@ -89,183 +112,131 @@ def read_file(filename):
 
         if len(fee_rows) > 0:
             data.extend(fee_rows)
+    return data
 
 
-def enrich_data():
-    for data_item in data:
+def enrich_data(read_data):
+    for read_data_item in read_data:
         utc = ZoneInfo('UTC')
         localtz = ZoneInfo('Europe/Tallinn')
-        data_item['UTC_Time'] = datetime.strptime(data_item['UTC_Time'], '%Y-%m-%d %H:%M:%S').replace(tzinfo=utc)
-        data_item['EST_Time'] = data_item['UTC_Time'].astimezone(localtz)
-        operations.add(data_item['Operation'])
+        read_data_item['UTC_Time'] = datetime.strptime(read_data_item['UTC_Time'], '%Y-%m-%d %H:%M:%S').replace(
+            tzinfo=utc)
+        read_data_item['EST_Time'] = read_data_item['UTC_Time'].astimezone(localtz)
 
-        if len(grouped_data) != 0 and \
-                grouped_data[-1]['EST_Time'] == data_item['EST_Time'] and \
-                (grouped_data[-1]['Operation'] == data_item['Operation'] or data_item['Operation'] == 'Fee'):
-            if get_data_amount(data_item) >= 0 or data_item['Operation'] == 'Fee':
-                if 'Plus' not in grouped_data[-1]:
-                    grouped_data[-1]['Plus'] = {'Coin': data_item['Coin'], 'Change': get_data_amount(data_item)}
-                elif grouped_data[-1]['Plus']['Coin'] == get_data_coin(data_item):
-                    grouped_data[-1]['Plus']['Change'] += get_data_amount(data_item)
+        if len(operations) != 0 and \
+                operations[-1].est_time == read_data_item['EST_Time'] and \
+                (operations[-1].type == read_data_item['Operation'] or read_data_item['Operation'] == 'Fee'):
+            if float(read_data_item['Change']) >= 0 or read_data_item['Operation'] == 'Fee':
+                if operations[-1].plus is None:
+                    operations[-1].plus = Transaction(coin=read_data_item['Coin'],
+                                                      amount=float(read_data_item['Change']))
+                elif operations[-1].plus.coin == read_data_item['Coin']:
+                    operations[-1].plus.amount += float(read_data_item['Change'])
                 else:
-                    raise Exception(f"Error while adding row {data_item} to grouped_data[-1]['Plus']")
+                    raise Exception(f"Error while adding row {read_data_item} to grouped_data[-1].plus")
             else:
-                if 'Minus' not in grouped_data[-1]:
-                    grouped_data[-1]['Minus'] = {'Coin': data_item['Coin'], 'Change': get_data_amount(data_item)}
-                elif grouped_data[-1]['Minus']['Coin'] == get_data_coin(data_item):
-                    grouped_data[-1]['Minus']['Change'] += get_data_amount(data_item)
+                if operations[-1].minus is None:
+                    operations[-1].minus = Transaction(coin=read_data_item['Coin'],
+                                                       amount=float(read_data_item['Change']))
+                elif operations[-1].minus.coin == read_data_item['Coin']:
+                    operations[-1].minus.amount += float(read_data_item['Change'])
                 else:
-                    raise Exception(f"Error while adding row {data_item} to grouped_data[-1]['Minus']")
+                    raise Exception(f"Error while adding row {read_data_item} to grouped_data[-1].minus")
         else:
-            grouped_data.append({})
-            grouped_data[-1]['EST_Time'] = data_item['EST_Time']
-            grouped_data[-1]['Operation'] = data_item['Operation']
-            if get_data_amount(data_item) >= 0:
-                grouped_data[-1]['Plus'] = {'Coin': data_item['Coin'], 'Change': get_data_amount(data_item)}
+            operations.append(Operation())
+            operations[-1].est_time = read_data_item['EST_Time']
+            operations[-1].type = read_data_item['Operation']
+            if float(read_data_item['Change']) >= 0:
+                operations[-1].plus = Transaction(coin=read_data_item['Coin'],
+                                                  amount=float(read_data_item['Change']))
             else:
-                grouped_data[-1]['Minus'] = {'Coin': data_item['Coin'], 'Change': get_data_amount(data_item)}
+                operations[-1].minus = Transaction(coin=read_data_item['Coin'],
+                                                   amount=float(read_data_item['Change']))
 
 
-def calculate_new_eur_amount(grouped_item):
-    if 'Minus' in grouped_item and 'USD' in grouped_item['Minus']['Coin']:
-        amount = abs(get_data_amount(grouped_item['Minus']))
-        new_eur_amount, rate = get_eur_amount_for_usd(amount, get_data_date(grouped_item),
-                                                get_data_coin(grouped_item['Minus']))
-    elif 'USD' in grouped_item['Plus']['Coin']:
-        amount = get_data_amount(grouped_item['Plus'])
-        new_eur_amount, rate = get_eur_amount_for_usd(amount, get_data_date(grouped_item),
-                                                get_data_coin(grouped_item['Plus']))
+def calculate_new_eur_amount(operation):
+    if operation.minus is not None and 'USD' in operation.minus.coin:
+        new_eur_amount, rate = get_eur_amount_for_usd(abs(operation.minus.amount), operation.est_time,
+                                                      operation.minus.coin)
+    elif 'USD' in operation.plus.coin:
+        new_eur_amount, rate = get_eur_amount_for_usd(operation.plus.amount, operation.est_time, operation.plus.coin)
     else:
-        raise Exception(f'Not supported operation {grouped_item}')
+        raise Exception(f'Not supported operation {operation}')
     return new_eur_amount, rate
 
 
 def process_minus_avg(coin, amount):
     coin_savings = savings[coin]
-    list_savings = coin_savings['List']
-    new_rate = 1.0 * coin_savings['Eur'] / coin_savings['Sum']
-    for item in list_savings:
-        item[2] = new_rate
-        item[1] = 1.0 * item[0] * new_rate
+    coin_saving_list = coin_savings.coins_list
+    new_rate = 1.0 * coin_savings.sum_eur / coin_savings.sum
+    for coin_saving_item in coin_saving_list:
+        coin_saving_item.exchange_eur_rate = new_rate
+        coin_saving_item.eur_amount = 1.0 * coin_saving_item.amount * new_rate
     return process_minus_fifo(coin, amount)
 
 
-def process_minus_fifo(coin, amount):
+def process_minus_fifo(coin, minus_amount) -> (float, list[CoinExchangeItem]):
     coin_savings = savings[coin]
-    list_savings = coin_savings['List']
+    coin_saving_list = coin_savings.coins_list
     minus_eur = 0
-    minus_eur_list = []
-    for i in range(len(list_savings)):
-        if amount < -1e-6:
-            raise Exception('Problem while minus')
-        item = list_savings[i]
-        if abs(item[0] - amount) < 1e-6:
-            minus_eur += item[1]
-            minus_eur_list.append(item)
-            coin_savings['Eur'] -= item[1]
-            coin_savings['Sum'] -= item[0]
-            coin_savings['List'] = list_savings[i + 1:]
-            amount -= item[0]
+    minus_eur_list: list[CoinExchangeItem] = []
+    for i in range(len(coin_saving_list)):
+        if minus_amount < -EPS:
+            raise Exception(f'Problem while minus operation. There is not enough coins {coin}')
+        coin_saving_item = coin_saving_list[i]
+        if abs(coin_saving_item.amount - minus_amount) < EPS:
+            minus_eur += coin_saving_item.eur_amount
+            minus_eur_list.append(coin_saving_item)
+            coin_savings.sum_eur -= coin_saving_item.eur_amount
+            coin_savings.sum -= coin_saving_item.amount
+            coin_savings.coins_list = coin_saving_list[i + 1:]
+            minus_amount -= coin_saving_item.amount
             break
-        elif item[0] > amount:
-            item[0] -= amount
-            item[1] -= amount * item[2]
-            minus_eur += amount * item[2]
-            minus_eur_list.append((amount, amount * item[2], item[2]))
-            coin_savings['Eur'] -= amount * item[2]
-            coin_savings['Sum'] -= amount
-            coin_savings['List'] = list_savings[i:]
-            amount -= amount
+        elif coin_saving_item.amount > minus_amount:
+            coin_saving_item.amount -= minus_amount
+            coin_saving_item.eur_amount -= minus_amount * coin_saving_item.exchange_eur_rate
+            minus_eur += minus_amount * coin_saving_item.exchange_eur_rate
+            minus_eur_list.append(CoinExchangeItem(minus_amount,
+                                                   minus_amount * coin_saving_item.exchange_eur_rate,
+                                                   coin_saving_item.exchange_eur_rate))
+            coin_savings.sum -= minus_amount
+            coin_savings.sum_eur -= minus_amount * coin_saving_item.exchange_eur_rate
+            coin_savings.coins_list = coin_saving_list[i:]
+            minus_amount -= minus_amount
             break
         else:
-            minus_eur += item[1]
-            minus_eur_list.append(item)
-            coin_savings['Eur'] -= item[1]
-            coin_savings['Sum'] -= item[0]
-            amount -= item[0]
-    if abs(amount) > 1e-6:
+            minus_eur += coin_saving_item.eur_amount
+            minus_eur_list.append(coin_saving_item)
+            coin_savings.sum_eur -= coin_saving_item.eur_amount
+            coin_savings.sum -= coin_saving_item.amount
+            minus_amount -= coin_saving_item.amount
+    if abs(minus_amount) > EPS:
         raise Exception(f'Not enough coins {coin}')
     return minus_eur, minus_eur_list
 
 
-def process_minus_lifo(coin, amount):
-    coin_savings = savings[coin]
-    list_savings = coin_savings['List']
-    minus_eur = 0
-    minus_eur_list = []
-    for i in range(len(list_savings) - 1, -1, -1):
-        if amount < -1e-6:
-            raise Exception('Problem while minus')
-        item = list_savings[i]
-        if abs(item[0] - amount) < 1e-6:
-            minus_eur += item[1]
-            minus_eur_list.append(item)
-            coin_savings['Eur'] -= item[1]
-            coin_savings['Sum'] -= item[0]
-            coin_savings['List'] = list_savings[:i]
-            amount -= item[0]
-            break
-        elif item[0] > amount:
-            item[0] -= amount
-            item[1] -= amount * item[2]
-            minus_eur += amount * item[2]
-            minus_eur_list.append((amount, amount * item[2], item[2]))
-            coin_savings['Eur'] -= amount * item[2]
-            coin_savings['Sum'] -= amount
-            coin_savings['List'] = list_savings[:i + 1]
-            amount -= amount
-            break
-        else:
-            minus_eur += item[1]
-            minus_eur_list.append(item)
-            coin_savings['Eur'] -= item[1]
-            coin_savings['Sum'] -= item[0]
-            amount -= item[0]
-    if abs(amount) > 1e-6:
-        raise Exception(f'Not enough coins {coin}')
-    return minus_eur
-
-
-def process_minus_coin(calc_type, coin, amount):
+def process_minus_coin(calc_type, coin, amount) -> (float, list[CoinExchangeItem]):
     if calc_type == 'AVG':
         return process_minus_avg(coin, amount)
     elif calc_type == 'FIFO':
         return process_minus_fifo(coin, amount)
-    elif calc_type == 'LIFO':
-        return process_minus_lifo(coin, amount)
     else:
         raise Exception(f'calc type {calc_type} is not supported')
 
 
 def process_grouped_data(calc_type):
-    for grouped_item in grouped_data:
-        new_eur_amount, eur_usd = calculate_new_eur_amount(grouped_item)
-        grouped_item['eur_usd'] = eur_usd
+    for operation in operations:
+        operation.new_eur_amount, operation.eur_usd_rate = calculate_new_eur_amount(operation)
 
-        if 'Minus' in grouped_item:
-            amount_minus = get_data_amount(grouped_item['Minus'])
-            coin_minus = get_data_coin(grouped_item['Minus'])
-            amount_plus = get_data_amount(grouped_item['Plus'])
-            coin_plus = get_data_coin(grouped_item['Plus'])
-
-            old_eur_amount, old_eur_list = process_minus_coin(calc_type, coin_minus, abs(amount_minus))
-            add_coin_amount(coin_plus, amount_plus, new_eur_amount)
-
-            grouped_item['new_eur_amount'] = new_eur_amount
-            grouped_item['old_eur_amount'] = old_eur_amount
-            grouped_item['profit'] = new_eur_amount - old_eur_amount
-            grouped_item['minus_coin_list'] = old_eur_list
-            if abs(new_eur_amount - old_eur_amount) < 1e-6 or old_eur_amount > new_eur_amount:
-                grouped_item['profit_flag'] = False
-            else:
-                grouped_item['profit_flag'] = True
+        if operation.minus is not None:
+            operation.old_eur_amount, operation.coins_list = process_minus_coin(calc_type, operation.minus.coin,
+                                                                                abs(operation.minus.amount))
+            add_coin_amount(operation.plus.coin, operation.plus.amount, operation.new_eur_amount)
+            operation.profit = operation.new_eur_amount - operation.old_eur_amount
+            operation.profit_flag = abs(operation.profit) > EPS and operation.profit > 0
         else:
-            amount_plus = get_data_amount(grouped_item['Plus'])
-            coin_plus = get_data_coin(grouped_item['Plus'])
-            add_coin_amount(coin_plus, amount_plus, new_eur_amount)
-
-            grouped_item['new_eur_amount'] = new_eur_amount
-        grouped_item['savings'] = deepcopy(savings)
+            add_coin_amount(operation.plus.coin, operation.plus.amount, operation.new_eur_amount)
+        operation.savings_after = deepcopy(savings)
 
 
 def show_operations(result_filename):
@@ -277,38 +248,25 @@ def show_operations(result_filename):
         file_writer = csv.writer(f, delimiter=';', lineterminator='\n')
         file_writer.writerow(fieldnames)
 
-        for grouped_item in grouped_data:
-            file_writer.writerow([grouped_item['EST_Time'],
-                                  get_data_coin(grouped_item["Minus"]) if 'Minus' in grouped_item else None,
-                                  get_data_coin(grouped_item["Plus"]),
-                                  get_data_amount(grouped_item["Minus"]) if 'Minus' in grouped_item else None,
-                                  get_data_amount(grouped_item["Plus"]),
-                                  grouped_item.get('profit_flag'),
-                                  grouped_item.get('profit'),
-                                  grouped_item.get('old_eur_amount'),
-                                  grouped_item.get('new_eur_amount'),
-                                  grouped_item['eur_usd'],
-                                  grouped_item.get('savings').get('BTC', {}).get('Sum'),
-                                  grouped_item.get('savings').get('USDT', {}).get('Sum'),
-                                  grouped_item.get('minus_coin_list')
+        for operation in operations:
+            file_writer.writerow([operation.est_time,
+                                  operation.minus.coin if operation.minus is not None else None,
+                                  operation.plus.coin,
+                                  operation.minus.amount if operation.minus is not None else None,
+                                  operation.plus.amount,
+                                  operation.profit_flag,
+                                  operation.profit,
+                                  operation.old_eur_amount,
+                                  operation.new_eur_amount,
+                                  operation.eur_usd_rate,
+                                  operation.savings_after.get('BTC', CoinSaving()).sum,
+                                  operation.savings_after.get('USDT', CoinSaving()).sum,
+                                  operation.coins_list
                                   ])
-            print(grouped_item['EST_Time'], grouped_item['Operation'], grouped_item.get('Plus', 'No Plus'),
-                  grouped_item.get('Minus', 'No minus'))
-            if 'profit_flag' not in grouped_item:
-                print(f'Add coin {get_data_coin(grouped_item["Plus"])} amount={get_data_amount(grouped_item["Plus"])} '
-                      f'eur_amount={grouped_item["new_eur_amount"]}')
-            else:
-                total_profit += grouped_item["profit"]
-                if grouped_item['profit_flag']:
-                    plus_profit += grouped_item["profit"]
-
-                print(
-                    f'Profit={grouped_item["profit_flag"]}, old_eur_amount={grouped_item["old_eur_amount"]}, '
-                    f'new_eur_amount={grouped_item["new_eur_amount"]}, profit={grouped_item["profit"]}, '
-                    f'coins={grouped_item["minus_coin_list"]}')
-                print(f'{get_data_coin(grouped_item["Minus"])}: '
-                      f'{grouped_item["savings"][get_data_coin(grouped_item["Minus"])]}')
-            print("----------")
+            if operation.profit_flag is not None:
+                total_profit += operation.profit
+                if operation.profit_flag:
+                    plus_profit += operation.profit
 
         print(f'Total profit: {total_profit}')
         print(f'Plus profit: {plus_profit}')
@@ -321,13 +279,10 @@ def load_usd_rates(filename):
             usd_rates[row[0]] = float(row[1])
 
 
-# ['User_ID', 'UTC_Time', 'Account', 'Operation', 'Coin', 'Change', 'Remark']
-# Press the green button in the gutter to run the script.
 if __name__ == '__main__':
-    read_file("tax_input.csv")
     load_usd_rates("eur_usd_rate_2022.csv")
-    enrich_data()
+    read_data = read_file("tax_input.csv")
+    enrich_data(read_data)
     process_grouped_data(calc_type)
     show_operations(f"results_{calc_type}.csv")
 
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/
