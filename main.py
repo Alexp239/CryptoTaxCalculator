@@ -237,7 +237,7 @@ def show_operations(result_filename):
     plus_profit = 0
     with open(result_filename, 'w') as f:
         fieldnames = ['Time', 'Minus coin', 'Plus coin', 'Minus amount', 'Plus amount', 'Is profit?', 'Profit',
-                      'old_eur_amount', 'new_eur_amount', 'EUR/USD', 'BTC', 'USDT', 'Minus source']
+                      'old_eur_amount', 'new_eur_amount', 'EUR/USD', 'BTC', 'USDT', 'exchange_eur_rate', 'Minus source']
         file_writer = csv.writer(f, delimiter=';', lineterminator='\n')
         file_writer.writerow(fieldnames)
 
@@ -254,6 +254,7 @@ def show_operations(result_filename):
                                   operation.eur_usd_rate,
                                   operation.savings_after.get('BTC', CoinSaving()).sum,
                                   operation.savings_after.get('USDT', CoinSaving()).sum,
+                                  operation.coins_list[0].exchange_eur_rate if operation.coins_list is not None and len(operation.coins_list) > 0 else None,
                                   operation.coins_list
                                   ])
             if operation.profit_flag is not None:
