@@ -10,6 +10,7 @@ class CoinExchangeItem:
     amount: float
     eur_amount: float
     exchange_eur_rate: float
+    prev_exchange_eur_rate: float = None
 
 
 @dataclass
@@ -163,6 +164,7 @@ def process_minus_avg(coin, amount):
     coin_saving_list = coin_savings.coins_list
     new_rate = 1.0 * coin_savings.sum_eur / coin_savings.sum
     for coin_saving_item in coin_saving_list:
+        coin_saving_item.prev_exchange_eur_rate = coin_saving_item.exchange_eur_rate
         coin_saving_item.exchange_eur_rate = new_rate
         coin_saving_item.eur_amount = 1.0 * coin_saving_item.amount * new_rate
     return process_minus_fifo(coin, amount)
@@ -191,7 +193,8 @@ def process_minus_fifo(coin, minus_amount) -> (float, list[CoinExchangeItem]):
             minus_eur += minus_amount * coin_saving_item.exchange_eur_rate
             minus_eur_list.append(CoinExchangeItem(minus_amount,
                                                    minus_amount * coin_saving_item.exchange_eur_rate,
-                                                   coin_saving_item.exchange_eur_rate))
+                                                   coin_saving_item.exchange_eur_rate,
+                                                   coin_saving_item.prev_exchange_eur_rate))
             coin_savings.sum -= minus_amount
             coin_savings.sum_eur -= minus_amount * coin_saving_item.exchange_eur_rate
             coin_savings.coins_list = coin_saving_list[i:]
