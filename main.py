@@ -41,22 +41,27 @@ class Operation:
     coins_list: list[CoinExchangeItem] = None
     savings_after: dict[str, CoinSaving] = field(default_factory=dict)
 
+    def is_fee(self):
+        return is_fee(self.type)
+
 
 remove_operations = ('Transfer from Main Account/Futures to Margin Account',
                      'Transfer from Margin Account to Main Account/Futures',
+                     'Transfer Between Main and Funding Wallet',
                      'Main and Funding Account Transfer',
                      'Simple Earn Flexible Subscription',
                      'Simple Earn Flexible Redemption',
-                     'Fiat Deposit',
-                     'Small Assets Exchange BNB')
+                     'Small Assets Exchange BNB',
+                     'Binance Card Spending',
+                     'Binance Card Cashback')
 EPS: float = 1e-6
 savings: dict[str, CoinSaving] = {}
 operations: list[Operation] = []
 usd_rates = {}
 
-# calc_type = 'FIFO'
-calc_type = 'AVG'
 
+def is_fee(op_type):
+    return op_type in ('Fee', 'Transaction Fee')
 
 def get_eur_amount_for_usd(amount, date, coin):
     if 'USD' in coin:
@@ -92,7 +97,7 @@ def add_coin_amount(coin, amount, eur_amount):
 def read_file(filename):
     data = []
     with open(filename, "r") as f:
-        file_reader = csv.reader(f, delimiter=';')
+        file_reader = csv.reader(f, delimiter=',')
         header_names = []
         for row in file_reader:
             if len(header_names) == 0:
@@ -114,13 +119,11 @@ def enrich_data(read_data):
             tzinfo=utc)
         read_data_item['EST_Time'] = read_data_item['UTC_Time'].astimezone(localtz)
 
-        if len(operations) != 0 and \
-                operations[-1].est_time == read_data_item['EST_Time'] and \
-                (operations[-1].type == read_data_item['Operation'] or read_data_item['Operation'] == 'Fee' or
-                 operations[-1].type == 'Fee'):
-            if read_data_item['Operation'] != 'Fee':
+        if (len(operations) != 0 and
+                operations[-1].est_time == read_data_item['EST_Time']):
+            if not is_fee(read_data_item['Operation']) and operations[-1].is_fee():
                 operations[-1].type = read_data_item['Operation']
-            if float(read_data_item['Change']) >= 0 or read_data_item['Operation'] == 'Fee':
+            if float(read_data_item['Change']) >= 0 or is_fee(read_data_item['Operation']):
                 if operations[-1].plus is None:
                     operations[-1].plus = Transaction(coin=read_data_item['Coin'],
                                                       amount=float(read_data_item['Change']))
@@ -140,7 +143,7 @@ def enrich_data(read_data):
             operations.append(Operation())
             operations[-1].est_time = read_data_item['EST_Time']
             operations[-1].type = read_data_item['Operation']
-            if float(read_data_item['Change']) >= 0 or read_data_item['Operation'] == 'Fee':
+            if float(read_data_item['Change']) >= 0 or is_fee(read_data_item['Operation']):
                 operations[-1].plus = Transaction(coin=read_data_item['Coin'],
                                                   amount=float(read_data_item['Change']))
             else:
@@ -277,8 +280,11 @@ def load_usd_rates(filename):
 
 
 if __name__ == '__main__':
-    load_usd_rates("eur_usd_rate_2022.csv")
-    read_data = read_file("tax_input.csv")
+    # calc_type = 'FIFO'
+    calc_type = 'AVG'
+
+    load_usd_rates("eur_usd_rate_2023.csv")
+    read_data = read_file("tax_input2023_without_28_04_23.csv")
     enrich_data(read_data)
     process_grouped_data(calc_type)
-    show_operations(f"results_{calc_type}.csv")
+    show_operations(f"results_{calc_type}_2024.csv")

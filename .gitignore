@@ -1,4 +1,4 @@
 .idea
 venv
 results_*.csv
-tax_input.csv
+tax_input*.csv
